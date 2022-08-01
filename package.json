@@ -1,0 +1,20 @@
+{
+  "name": "echarts-ssr",
+  "version": "1.0.0",
+  "main": "index.js",
+  "license": "MIT",
+  "scripts": {
+    "dev": "nitropack dev",
+    "build": "nitropack build",
+    "start": "node .output/server/index.mjs"
+  },
+  "devDependencies": {
+    "@types/jsdom": "^20.0.0",
+    "nitropack": "^0.4.12"
+  },
+  "dependencies": {
+    "@napi-rs/canvas": "^0.1.25",
+    "echarts": "^5.3.3",
+    "jsdom": "^20.0.0"
+  }
+}
