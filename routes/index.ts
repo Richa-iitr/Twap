@@ -31,6 +31,7 @@ export default function () {
 
     // Display the chart using the configuration items and data just specified.
     chart.setOption( {
+        animation: false,
         color: ['#80FFA5', '#00DDFF', '#37A2FF', '#FF0087', '#FFBF00'],
         title: {
             text: 'Gradient Stacked Area Chart'
@@ -49,7 +50,7 @@ export default function () {
         },
         toolbox: {
             feature: {
-                saveAsImage: {}
+                // saveAsImage: {}
             }
         },
         grid: {
