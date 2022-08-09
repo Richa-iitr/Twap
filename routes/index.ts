@@ -16,6 +16,7 @@ const twapClient = new ApolloClient({
 });
 
 //loader
+
 async function fetchData() {
   const tickQuery = `
         query swapDatas($lastID: String) {
@@ -78,7 +79,7 @@ async function processTwap() {
     let logIndex = new BigNumber(obj.logIndex);
     let transactionLogIndex = new BigNumber(obj.transactionLogIndex);
 
-    if (tick !== prevTick) {
+    if (tick.toFixed() !== prevTick.toFixed()) {
       if (!map.get(timeStamp)) {
         map.set(timeStamp, { tick: tick, logIndex: logIndex });
         prevTick = tick;
@@ -97,13 +98,13 @@ async function processTwap() {
 
   map.forEach((_data, _time) => {
     tickArr.push({
-      timeStamp: new BigNumber(_time),
-      tick: new BigNumber(_data.tick),
-      block: new BigNumber(blockMap.get(_time)),
+      timeStamp: new BigNumber(_time).toFixed(),
+      tick: new BigNumber(_data.tick).toFixed(),
+      block: new BigNumber(blockMap.get(_time)).toFixed(),
     });
   });
   // console.log(tickArr);
-  tickArr = tickArr.sort((a, b) => (a.timeStamp.gt(b.timeStamp) ? 1 : -1));
+  tickArr = tickArr.sort((a, b) => (a.timeStamp > b.timeStamp ? 1 : -1));
   return {
     tickArr: tickArr,
     initialTime: initialTime,
@@ -111,21 +112,23 @@ async function processTwap() {
   };
 }
 
+//TODO: modify to binary search
 function getBounds(timestamp, timeArr) {
-  const allLower = timeArr.filter((x) =>
-    new BigNumber(x).isLessThan(timestamp)
-  );
-  const allUpper = timeArr.filter((x) =>
-    new BigNumber(x).isGreaterThan(timestamp)
-  );
-  console.log(allLower);
+  let lowerBound = timeArr[0];
+  let upperBound = timeArr[timeArr.length - 1];
+  // let upperTick =
 
-  const lowerBound = BigNumber.maximum(...allLower);
-  const upperBound = BigNumber.minimum(...allUpper);
+  for (let i = 0; i < timeArr.length; i++) {
+    let time = timeArr[i];
+    if (new BigNumber(time).isGreaterThan(timestamp)) {
+      upperBound = BigNumber.minimum(upperBound, new BigNumber(time));
+    } else if (new BigNumber(time).isLessThan(timestamp)) {
+      lowerBound = BigNumber.maximum(lowerBound, new BigNumber(time));
+    }
+  }
 
   return { lowerBound: lowerBound, upperBound: upperBound };
 }
-
 async function cumulativeTickToTwap(
   cumulativeTickArr,
   cumulativeTickMap,
@@ -134,7 +137,7 @@ async function cumulativeTickToTwap(
 ) {
   let twapArr = [];
   let priceArr = [];
-  let times = [];
+  let blocks = [];
   let lastStoreTime = cumulativeTickArr[cumulativeTickArr.length - 1].timeStamp;
 
   for (let obj of cumulativeTickArr) {
@@ -145,31 +148,33 @@ async function cumulativeTickToTwap(
 
     let s_k = new BigNumber(obj.cumulativeTick);
     let s_n;
-    if (!cumulativeTickMap.get(endTime)) {
+    if (!cumulativeTickMap.get(endTime.toFixed())) {
       let bounds = getBounds(endTime, timeArr);
+      // console.log(cumulativeTickMap.get(bounds.lowerBound.toFixed()));
       let targetDelta = new BigNumber(endTime).minus(bounds.lowerBound);
       let observationDelta = new BigNumber(bounds.upperBound).minus(
         bounds.lowerBound
       );
 
-      s_n = new BigNumber(cumulativeTickMap.get(bounds.lowerBound)).plus(
+      s_n = new BigNumber(
+        cumulativeTickMap.get(bounds.lowerBound.toFixed())
+      ).plus(
         new BigNumber(
-          new BigNumber(cumulativeTickMap.get(bounds.upperBound))
-            .minus(cumulativeTickMap.get(bounds.lowerBound))
+          new BigNumber(cumulativeTickMap.get(bounds.upperBound.toFixed()))
+            .minus(cumulativeTickMap.get(bounds.lowerBound.toFixed()))
             .dividedBy(observationDelta)
         ).multipliedBy(targetDelta)
       );
     } else {
-      s_n = new BigNumber(cumulativeTickMap.get(endTime));
+      s_n = new BigNumber(cumulativeTickMap.get(endTime.toFixed()));
     }
 
     let twap = new BigNumber(s_n.minus(s_k)).dividedBy(duration);
-    twapArr.push(twap);
     priceArr.push(calculatePrice(twap));
-    times.push(new BigNumber(obj.timeStamp).toString());
+    blocks.push(new BigNumber(obj.block).toString());
   }
-  console.log(twapArr);
-  return { priceArr: priceArr, times: times };
+
+  return { priceArr: priceArr, blocks: blocks };
 }
 
 async function getTwaps(duration) {
@@ -184,20 +189,25 @@ async function getTwaps(duration) {
   cumulativeTickArr.push({
     cumulativeTick: new BigNumber(0),
     timeStamp: new BigNumber(tickArr[0].timeStamp),
+    block: new BigNumber(tickArr[0].block),
   });
-  cumulativeTickMap.set(new BigNumber(tickArr[0].timeStamp), new BigNumber(0));
+  cumulativeTickMap.set(tickArr[0].timeStamp, new BigNumber(0));
   timeArr.push(new BigNumber(tickArr[0].timeStamp));
 
   // cumulativeTicks_i = Tick_i-1(time_i - time_i-1)
   for (let i = 1; i < tickArr.length; i++) {
     let curTime = new BigNumber(tickArr[i].timeStamp);
     let interval = new BigNumber(curTime).minus(tickArr[i - 1].timeStamp);
-    let prevCumulative = new BigNumber(cumulativeTickArr.at(-1));
+    let prevCumulative = cumulativeTickArr.at(-1).cumulativeTick;
     let _cumulative = new BigNumber(tickArr[i - 1].tick)
       .multipliedBy(interval)
       .plus(prevCumulative);
-    cumulativeTickArr.push({ cumulativeTick: _cumulative, timeStamp: curTime });
-    cumulativeTickMap.set(curTime, _cumulative);
+    cumulativeTickArr.push({
+      cumulativeTick: _cumulative,
+      timeStamp: curTime,
+      block: new BigNumber(tickArr[i].block),
+    });
+    cumulativeTickMap.set(curTime.toFixed(), _cumulative);
     timeArr.push(curTime);
   }
 
@@ -210,19 +220,24 @@ async function getTwaps(duration) {
 
   let coords = {
     y: data.priceArr,
-    x: data.times,
+    x: data.blocks,
   };
 
   return coords;
 }
 
 function calculatePrice(twap) {
-  return Math.pow(1.0001, twap);
+  let priceOfToken0InToken1 = Math.pow(1.0001, twap.toFixed()) / 10 ** 12;
+  return 1 / priceOfToken0InToken1;
 }
+
+var myChart = echarts.init(q("#chart"), "dark", {
+  renderer: "svg",
+});
 
 export default async function () {
   const width = 1024;
-  const height = 600;
+  const height = 800;
 
   const canvas = createCanvas(width, height);
 
@@ -247,7 +262,9 @@ export default async function () {
   });
 
   // Display the chart using the configuration items and data just specified.
-  var plotData1 = await getTwaps(300);
+  var plotData1 = await getTwaps(1800);
+  var plotData2 = await getTwaps(3600);
+  var plotData3 = await getTwaps(7200);
   chart.setOption({
     animation: false,
     color: ["#80FFA5", "#00DDFF", "#37A2FF", "#FF0087", "#FFBF00"],
@@ -264,7 +281,7 @@ export default async function () {
       },
     },
     legend: {
-      data: ["5 min"],
+      data: ["30 min", "60 min", "120 min"],
     },
     toolbox: {
       feature: {
@@ -291,144 +308,47 @@ export default async function () {
     ],
     series: [
       {
-        name: "5 min",
+        name: "30min",
         type: "line",
-        stack: "Total",
-        smooth: true,
-        lineStyle: {
-          width: 0,
+        data: plotData1.y,
+        encode: {
+          x: "Timestamp",
+          y: "Price",
+          itemName: "Timestamp",
+          tooltip: ["Price"],
         },
-        showSymbol: false,
-        areaStyle: {
-          opacity: 0.8,
-          color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-            {
-              offset: 0,
-              color: "rgb(128, 255, 165)",
-            },
-            {
-              offset: 1,
-              color: "rgb(1, 191, 236)",
-            },
-          ]),
-        },
-        emphasis: {
-          focus: "series",
-        },
-        data: [1,2,2,3],
       },
-      // {
-      //     name: 'Line 2',
-      //     type: 'line',
-      //     stack: 'Total',
-      //     smooth: true,
-      //     lineStyle: {
-      //         width: 0
-      //     },
-      //     showSymbol: false,
-      //     areaStyle: {
-      //         opacity: 0.8,
-      //         color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-      //             {
-      //                 offset: 0,
-      //                 color: 'rgb(0, 221, 255)'
-      //             },
-      //             {
-      //                 offset: 1,
-      //                 color: 'rgb(77, 119, 255)'
-      //             }
-      //         ])
-      //     },
-      //     emphasis: {
-      //         focus: 'series'
-      //     },
-      //     data: [120, 282, 111, 234, 220, 340, 310]
-      // },
-      // {
-      //     name: 'Line 3',
-      //     type: 'line',
-      //     stack: 'Total',
-      //     smooth: true,
-      //     lineStyle: {
-      //         width: 0
-      //     },
-      //     showSymbol: false,
-      //     areaStyle: {
-      //         opacity: 0.8,
-      //         color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-      //             {
-      //                 offset: 0,
-      //                 color: 'rgb(55, 162, 255)'
-      //             },
-      //             {
-      //                 offset: 1,
-      //                 color: 'rgb(116, 21, 219)'
-      //             }
-      //         ])
-      //     },
-      //     emphasis: {
-      //         focus: 'series'
-      //     },
-      //     data: [320, 132, 201, 334, 190, 130, 220]
-      // },
-      // {
-      //     name: 'Line 4',
-      //     type: 'line',
-      //     stack: 'Total',
-      //     smooth: true,
-      //     lineStyle: {
-      //         width: 0
-      //     },
-      //     showSymbol: false,
-      //     areaStyle: {
-      //         opacity: 0.8,
-      //         color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-      //             {
-      //                 offset: 0,
-      //                 color: 'rgb(255, 0, 135)'
-      //             },
-      //             {
-      //                 offset: 1,
-      //                 color: 'rgb(135, 0, 157)'
-      //             }
-      //         ])
-      //     },
-      //     emphasis: {
-      //         focus: 'series'
-      //     },
-      //     data: [220, 402, 231, 134, 190, 230, 120]
-      // },
-      // {
-      //     name: 'Line 5',
-      //     type: 'line',
-      //     stack: 'Total',
-      //     smooth: true,
-      //     lineStyle: {
-      //         width: 0
-      //     },
-      //     showSymbol: false,
-      //     label: {
-      //         show: true,
-      //         position: 'top'
-      //     },
-      //     areaStyle: {
-      //         opacity: 0.8,
-      //         color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-      //             {
-      //                 offset: 0,
-      //                 color: 'rgb(255, 191, 0)'
-      //             },
-      //             {
-      //                 offset: 1,
-      //                 color: 'rgb(224, 62, 76)'
-      //             }
-      //         ])
-      //     },
-      //     emphasis: {
-      //         focus: 'series'
-      //     },
-      //     data: [220, 302, 181, 234, 210, 290, 150]
-      // }
+      {
+        name: "60min",
+        type: "line",
+        data: plotData2.y,
+        encode: {
+          x: "Timestamp",
+          y: "Price",
+          itemName: "Timestamp",
+          tooltip: ["Price"],
+        },
+      },
+      {
+        name: "120min",
+        type: "line",
+        data: plotData3.y,
+      },
+    ],
+    dataZoom: [
+      {
+        type: "inside",
+        zoomOnMouseWheel: false,
+        moveOnMouseWheel: true,
+        xAxisIndex: 0,
+        start: 30,
+        end: 40,
+      },
+      {
+        type: "slider",
+        start: 30,
+        end: 40,
+      },
     ],
   });
 
