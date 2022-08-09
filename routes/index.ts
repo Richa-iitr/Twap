@@ -231,10 +231,6 @@ function calculatePrice(twap) {
   return 1 / priceOfToken0InToken1;
 }
 
-var myChart = echarts.init(q("#chart"), "dark", {
-  renderer: "svg",
-});
-
 export default async function () {
   const width = 1024;
   const height = 800;
